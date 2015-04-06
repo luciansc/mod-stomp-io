@@ -1,6 +1,7 @@
 package com.jetdrone.vertx.mods.stomp;
 
 import com.jetdrone.vertx.mods.stomp.impl.StompSubscriptions;
+
 import org.vertx.java.busmods.BusModBase;
 import org.vertx.java.core.Handler;
 import org.vertx.java.core.eventbus.Message;
@@ -10,13 +11,28 @@ import java.util.Random;
 import java.util.UUID;
 
 public class StompClientBusMod extends BusModBase implements Handler<Message<JsonObject>> {
-
+    
     private static final Random RANDOM = new Random();
-
-    private StompClient stompClient;
-    private StompSubscriptions stompSubscriptions;
-    private String baseAddress;
-
+    private static final String STOMP_TRANSPORT_CONNECTOR = "stomp";
+    private static final String STOMP_SSL_TRANSPORT_CONNECTOR = "stomp+ssl";
+    
+    private static final String CONF_TRANSPORT_CONNECTOR_KEY = "transportConnector";
+    private static final String CONF_HOST_KEY = "host";
+    private static final String CONF_HOST_DEFAULT_VALUE = "localhost";
+    private static final String CONF_PORT_KEY = "port";
+    private static final int CONF_PORT_STOMP_DEFAULT_VALUE = 61613;
+    private static final int CONF_PORT_STOMP_SSL_DEFAULT_VALUE = 61612;
+    private static final String CONF_CLIENT_KEY_STORE_LOCATION = "clientKeyStoreLocation";
+    private static final String CONF_CLIENT_KEY_STORE_TYPE = "clientKeyStoreType";
+    private static final String CONF_CLIENT_KEY_STORE_PASSWORD = "clientKeyStorePassword";
+    private static final String CONF_CLIENT_TRUST_STORE_LOCATION = "clientTrustStoreLocation";
+    private static final String CONF_CLIENT_TRUST_STORE_TYPE = "clientTrustStoreType";
+    private static final String CONF_CLIENT_TRUST_STORE_PASSWORD = "clientTrustStorePassword";
+    
+    private static final String CONF_LOGIN_KEY = "login";
+    private static final String CONF_LOGIN_DEFAULT_VALUE = null;
+    
+    
     private static String generateID() {
         return new UUID(RANDOM.nextLong(), RANDOM.nextLong()).toString();
     }
@@ -28,19 +44,39 @@ public class StompClientBusMod extends BusModBase implements Handler<Message<Jso
         }
         return field;
     }
+    
+    private StompClient stompClient;
+    private StompSubscriptions stompSubscriptions;
+    private String baseAddress;
 
     @Override
     public void start() {
         super.start();
 
-        String host = getOptionalStringConfig("host", "localhost");
-        int port = getOptionalIntConfig("port", 61613);
-        String login = getOptionalStringConfig("login", null);
-        String passcode = getOptionalStringConfig("passcode", null);
+        final String connectorProtocol = getOptionalStringConfig(StompClientBusMod.CONF_TRANSPORT_CONNECTOR_KEY,
+                StompClientBusMod.STOMP_TRANSPORT_CONNECTOR);
+        boolean isSSL = StompClientBusMod.STOMP_SSL_TRANSPORT_CONNECTOR.equals(connectorProtocol);
+
+        final String host = getOptionalStringConfig(StompClientBusMod.CONF_HOST_KEY, CONF_HOST_DEFAULT_VALUE);
+        final int port = getOptionalIntConfig(StompClientBusMod.CONF_PORT_KEY,
+                isSSL ? StompClientBusMod.CONF_PORT_STOMP_SSL_DEFAULT_VALUE
+                        : StompClientBusMod.CONF_PORT_STOMP_DEFAULT_VALUE);
+        final String login = getOptionalStringConfig(StompClientBusMod.CONF_LOGIN_KEY,
+                StompClientBusMod.CONF_LOGIN_DEFAULT_VALUE);
+        final String passcode = getOptionalStringConfig("passcode", null);
+
+        final String clientKeyStoreLocation = getOptionalStringConfig(CONF_CLIENT_KEY_STORE_LOCATION, "");
+        final String clientKeyStoreType = getOptionalStringConfig(CONF_CLIENT_KEY_STORE_TYPE, "");
+        final String clientKeyStorePassword = getOptionalStringConfig(CONF_CLIENT_KEY_STORE_PASSWORD, "");
+        final String clientTrustStoreLocation = getOptionalStringConfig(CONF_CLIENT_TRUST_STORE_LOCATION, "");
+        final String clientTrustStoreType = getOptionalStringConfig(CONF_CLIENT_TRUST_STORE_TYPE, "");
+        final String clientTrustStorePassword = getOptionalStringConfig(CONF_CLIENT_TRUST_STORE_PASSWORD, "");
 
         stompSubscriptions = new StompSubscriptions();
 
-        stompClient = new StompClient(vertx, logger, host, port, login, passcode, stompSubscriptions);
+        stompClient = new StompClient(vertx, logger, isSSL, host, port, login, passcode, stompSubscriptions,
+                clientKeyStoreLocation, clientKeyStoreType, clientKeyStorePassword, clientTrustStoreLocation,
+                clientTrustStoreType, clientTrustStorePassword);
         stompClient.connect(null);
 
         baseAddress = getOptionalStringConfig("address", "vertx.mod-stomp-io");
