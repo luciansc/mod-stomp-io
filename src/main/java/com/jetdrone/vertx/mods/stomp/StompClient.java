@@ -15,8 +15,9 @@ import java.util.*;
 
 /**
  * STOMP StompClient Class
- * <p/>
+ * <p>
  * All STOMP protocol is exposed as methods of this class (`connect()`, `send()`, etc.)
+ * </p>
  */
 public class StompClient implements FrameHandler {
 
@@ -278,7 +279,8 @@ public class StompClient implements FrameHandler {
     }
 
     private void setupHeartbeat(Map<String, String> headers) {
-        if (headers.get("version").equals(Protocol.V1_0.version)) {
+        // Avoid NPE
+        if (Protocol.V1_0.version.equals(headers.get("version"))) {
             return;
         }
 
