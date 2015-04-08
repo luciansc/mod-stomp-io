@@ -1,25 +1,8 @@
 package com.jetdrone.vertx.mods.stomp;
 
-import java.io.FileInputStream;
-import java.io.FileNotFoundException;
-import java.io.IOException;
-import java.io.InputStream;
-import java.security.KeyManagementException;
-import java.security.KeyStore;
-import java.security.KeyStoreException;
-import java.security.NoSuchAlgorithmException;
-import java.security.UnrecoverableKeyException;
-import java.security.cert.CertificateException;
-import java.text.MessageFormat;
 import java.util.LinkedList;
 import java.util.Map;
 import java.util.Queue;
-
-import javax.net.ssl.KeyManager;
-import javax.net.ssl.KeyManagerFactory;
-import javax.net.ssl.SSLContext;
-import javax.net.ssl.TrustManager;
-import javax.net.ssl.TrustManagerFactory;
 
 import org.vertx.java.core.AsyncResult;
 import org.vertx.java.core.AsyncResultHandler;
@@ -41,16 +24,12 @@ import com.jetdrone.vertx.mods.stomp.impl.StompSubscriptions;
  */
 public class StompClient implements FrameHandler {
 
-    private static final Frame ASYNC_FRAME = new Frame("ASYNC");
-    private static final String SSL_ALGORITHM = "TLS";
-    private static final String COMMA_STRING = ",";
-
     private static class Heartbeat {
         int sx;
         int sy;
 
         static Heartbeat parse(String header) {
-            String[] token = header.split(StompClient.COMMA_STRING);
+            String[] token = header.split(",");
             Heartbeat beat = new Heartbeat();
             beat.sx = Integer.parseInt(token[0]);
             beat.sy = Integer.parseInt(token[1]);
@@ -60,28 +39,15 @@ public class StompClient implements FrameHandler {
 
         @Override
         public String toString() {
-            return sx + COMMA_STRING + sy;
+            return sx + "," + sy;
         }
     }
 
-    private static enum State {
-        DISCONNECTED, CONNECTING, CONNECTED
-    }
-
-    private static String getSupportedVersions() {
-        return String.format("%s,%s,%s", Protocol.V1_2.version, Protocol.V1_1.version, Protocol.V1_0.version);
-    }
+    private static final Frame ASYNC_FRAME = new Frame("ASYNC");
 
     private final Heartbeat heartbeat = new Heartbeat();
     private final Queue<Handler<Frame>> replies = new LinkedList<>();
     private final StompSubscriptions subscriptions;
-
-    private final String clientKeyStoreLocation;
-    private final String clientKeyStoreType;
-    private final String clientKeyStorePassword;
-    private final String clientTrustStoreLocation;
-    private final String clientTrustStoreType;
-    private final String clientTrustStorePassword;
 
     private long pinger;
     private long ponger;
@@ -89,38 +55,51 @@ public class StompClient implements FrameHandler {
 
     private final Vertx vertx;
     private final Logger logger;
-    private final boolean isSSL;
     private final String host;
     private final int port;
     private final String login;
     private final String passcode;
 
     private NetSocket netSocket;
-    private final FrameParser frameParser = new FrameParser(this);
+    final FrameParser frameParser = new FrameParser(this);
+
+    private static enum State {
+        DISCONNECTED,
+        CONNECTING,
+        CONNECTED
+    }
 
     private State state = State.DISCONNECTED;
 
+    private static String getSupportedVersions() {
+        return Protocol.V1_2.version + "," + Protocol.V1_1.version + "," + Protocol.V1_0.version;
+    }
+    
+    private final boolean isSSL;
+    private final String clientKeyStoreLocation;
+    private final String clientKeyStorePassword;
+    private final String clientTrustStoreLocation;
+    private final String clientTrustStorePassword;
+    
     public StompClient(final Vertx vertx, final Logger logger, final boolean isSSL, final String host, final int port,
             final String login, final String passcode, final StompSubscriptions subscriptions,
-            final String clientKeyStoreLocation, final String clientKeyStoreType, final String clientKeyStorePassword,
-            final String clientTrustStoreLocation, final String clientTrustStoreType,
-            final String clientTrustStorePassword) {
+            final String clientKeyStoreLocation, final String clientKeyStorePassword,
+            final String clientTrustStoreLocation, final String clientTrustStorePassword) {
         this.vertx = vertx;
         this.logger = logger;
-        this.isSSL = isSSL;
         this.host = host;
         this.port = port;
         this.login = login;
         this.passcode = passcode;
         this.subscriptions = subscriptions;
 
+        this.isSSL = isSSL;
         this.clientKeyStoreLocation = clientKeyStoreLocation;
-        this.clientKeyStoreType = clientKeyStoreType;
         this.clientKeyStorePassword = clientKeyStorePassword;
         this.clientTrustStoreLocation = clientTrustStoreLocation;
-        this.clientTrustStoreType = clientTrustStoreType;
         this.clientTrustStorePassword = clientTrustStorePassword;
     }
+
 
     public void connect(final AsyncResultHandler<Void> resultHandler) {
         if (state == State.DISCONNECTED) {
@@ -129,8 +108,10 @@ public class StompClient implements FrameHandler {
             NetClient client = vertx.createNetClient();
             if (isSSL) {
                 client.setSSL(isSSL);
-                SSLContext sslContext = sslContext();
-                client.setSSLContext(sslContext);
+                client.setKeyStorePassword(clientKeyStorePassword);
+                client.setKeyStorePath(clientKeyStoreLocation);
+                client.setTrustStorePassword(clientTrustStorePassword);
+                client.setTrustStorePath(clientTrustStoreLocation);
             }
 
             client.connect(port, host, new AsyncResultHandler<NetSocket>() {
@@ -210,7 +191,8 @@ public class StompClient implements FrameHandler {
     }
 
     /**
-     * Clean up client resources when it is disconnected or the server did not send heart beats in a timely fashion
+     * Clean up client resources when it is disconnected or the server did not
+     * send heart beats in a timely fashion
      */
     private void disconnect() {
         state = State.DISCONNECTED;
@@ -228,61 +210,62 @@ public class StompClient implements FrameHandler {
 
     void send(final Frame frame, final boolean async, final Handler<Frame> replyHandler) {
         switch (state) {
-        case CONNECTED:
-            netSocket.write(frame.command);
-            netSocket.write("\n");
-
-            for (Map.Entry<String, String> entry : frame.headers.entrySet()) {
-                String value = entry.getValue();
-                if (value != null) {
-                    netSocket.write(entry.getKey());
-                    netSocket.write(":");
-                    netSocket.write(Frame.escape(entry.getValue()));
-                    netSocket.write("\n");
-                }
-            }
-
-            if (frame.body != null) {
-                netSocket.write("content-length:");
-                netSocket.write(Integer.toString(frame.body.length()));
+            case CONNECTED:
+                netSocket.write(frame.command);
                 netSocket.write("\n");
-            }
 
-            netSocket.write("\n");
-            if (frame.body != null) {
-                netSocket.write(frame.body);
-            }
-
-            netSocket.write("\0");
-            if (async) {
-                replyHandler.handle(ASYNC_FRAME);
-            } else {
-                replies.offer(replyHandler);
-            }
-            break;
-        case DISCONNECTED:
-            logger.info("Got request when disconnected. Trying to connect.");
-            connect(new AsyncResultHandler<Void>() {
-                public void handle(AsyncResult<Void> connection) {
-                    if (connection.succeeded()) {
-                        send(frame, async, replyHandler);
-                    } else {
-                        Frame error = new Frame("ERROR");
-                        error.body = "Unable to connect";
-                        replyHandler.handle(error);
+                for (Map.Entry<String, String> entry : frame.headers.entrySet()) {
+                    String value = entry.getValue();
+                    if (value != null) {
+                        netSocket.write(entry.getKey());
+                        netSocket.write(":");
+                        netSocket.write(Frame.escape(entry.getValue()));
+                        netSocket.write("\n");
                     }
                 }
-            });
-            break;
-        case CONNECTING:
-            logger.debug("Got send request while connecting. Will try again in a while.");
-            vertx.setTimer(100, new Handler<Long>() {
-                public void handle(Long event) {
-                    send(frame, async, replyHandler);
+
+                if (frame.body != null) {
+                    netSocket.write("content-length:");
+                    netSocket.write(Integer.toString(frame.body.length()));
+                    netSocket.write("\n");
                 }
-            });
+
+                netSocket.write("\n");
+                if (frame.body != null) {
+                    netSocket.write(frame.body);
+                }
+
+                netSocket.write("\0");
+                if (async) {
+                    replyHandler.handle(ASYNC_FRAME);
+                } else {
+                    replies.offer(replyHandler);
+                }
+                break;
+            case DISCONNECTED:
+                logger.info("Got request when disconnected. Trying to connect.");
+                connect(new AsyncResultHandler<Void>() {
+                    public void handle(AsyncResult<Void> connection) {
+                        if (connection.succeeded()) {
+                            send(frame, async, replyHandler);
+                        } else {
+                            Frame error = new Frame("ERROR");
+                            error.body = "Unable to connect";
+                            replyHandler.handle(error);
+                        }
+                    }
+                });
+                break;
+            case CONNECTING:
+                logger.debug("Got send request while connecting. Will try again in a while.");
+                vertx.setTimer(100, new Handler<Long>() {
+                    public void handle(Long event) {
+                        send(frame, async, replyHandler);
+                    }
+                });
         }
     }
+
 
     private void init(NetSocket netSocket) {
         this.netSocket = netSocket;
@@ -294,6 +277,7 @@ public class StompClient implements FrameHandler {
         netSocket.dataHandler(new Handler<Buffer>() {
             @Override
             public void handle(Buffer buffer) {
+//                System.out.println("<<<" + buffer.toString("UTF-8").replaceAll("\0", "^@"));
                 serverActivity = System.currentTimeMillis();
                 frameParser.handle(buffer);
             }
@@ -315,6 +299,7 @@ public class StompClient implements FrameHandler {
             @Override
             public void handle(Frame frame) {
                 logger.debug("connected to server " + frame.headers.get("server"));
+                // connected = true
                 setupHeartbeat(frame.headers);
             }
         });
@@ -326,7 +311,8 @@ public class StompClient implements FrameHandler {
         }
 
         // heart-beat header received from the server looks like:
-        // heart-beat: sx, sy
+        //
+        //     heart-beat: sx, sy
         Heartbeat heartbeat = Heartbeat.parse(headers.get("heart-beat"));
 
         if (this.heartbeat.sx != 0 && heartbeat.sy != 0) {
@@ -346,7 +332,6 @@ public class StompClient implements FrameHandler {
         if (this.heartbeat.sy != 0 && heartbeat.sx != 0) {
             final int ttl = Math.max(this.heartbeat.sy, heartbeat.sx);
             logger.debug("check PONG every " + ttl + "ms");
-
             ponger = vertx.setPeriodic(ttl, new Handler<Long>() {
                 @Override
                 public void handle(Long event) {
@@ -388,65 +373,9 @@ public class StompClient implements FrameHandler {
 
         }
 
+//        System.out.println(reply.command);
+//        System.out.println(reply.toJSON());
+
         throw new RuntimeException("Received a non MESSAGE while in SUBSCRIBE mode");
-    }
-
-    private SSLContext sslContext() {
-        try {
-            final SSLContext sslContext = SSLContext.getInstance(SSL_ALGORITHM);
-            sslContext.init(
-                    initialiseKeyManagerFactory(clientKeyStoreLocation, clientKeyStoreType, clientKeyStorePassword),
-                    initialiseTrustManagerFactory(clientKeyStoreLocation, clientTrustStoreLocation,
-                            clientTrustStoreType, clientTrustStorePassword), null);
-            return sslContext;
-        } catch (final KeyManagementException e) {
-            throw new IllegalStateException(e);
-        } catch (final NoSuchAlgorithmException e) {
-            throw new IllegalStateException("Unable to initialise SSL Context with TLS");
-        } catch (final IOException e) {
-            throw new IllegalStateException("Unable to read store from file", e);
-        } catch (final KeyStoreException e) {
-            throw new IllegalStateException("Unable to initialise SSL", e);
-        } catch (final CertificateException e) {
-            throw new IllegalStateException(
-                    MessageFormat
-                            .format("Unable to read certicates from file. Are the provided Keystore{0} and the provided Truststore {1} both valid keystores?",
-                                    clientKeyStoreLocation, clientTrustStoreLocation));
-        } catch (final UnrecoverableKeyException e) {
-            throw new IllegalStateException(e);
-        }
-    }
-
-    private TrustManager[] initialiseTrustManagerFactory(final String clientKeyStoreLocation,
-            final String clientTrustStoreLocation, final String clientTrustStoreType,
-            final String clientTrustStorePassword) throws NoSuchAlgorithmException, KeyStoreException, IOException,
-            CertificateException, FileNotFoundException {
-        if (clientKeyStoreLocation.isEmpty()) {
-            // Default to the Java system trustStore.
-            return null;
-        }
-        final TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
-        try (InputStream truststoreFile = new FileInputStream(clientTrustStoreLocation)) {
-            final KeyStore ts = KeyStore.getInstance(clientTrustStoreType);
-            ts.load(truststoreFile, clientTrustStorePassword.toCharArray());
-            tmf.init(ts);
-        }
-        return tmf.getTrustManagers();
-    }
-
-    private KeyManager[] initialiseKeyManagerFactory(final String clientKeyStoreLocation,
-            final String clientKeyStoreType, final String clientKeyStorePassword) throws NoSuchAlgorithmException,
-            KeyStoreException, IOException, CertificateException, UnrecoverableKeyException, FileNotFoundException {
-        if (clientKeyStoreLocation.isEmpty()) {
-            // SSL Context delegates to JAVA
-            return null;
-        }
-        final KeyManagerFactory kmf = KeyManagerFactory.getInstance("SunX509");
-        try (InputStream keystoreFile = new FileInputStream(clientKeyStoreLocation)) {
-            final KeyStore ks = KeyStore.getInstance(clientKeyStoreType);
-            ks.load(keystoreFile, clientKeyStorePassword.toCharArray());
-            kmf.init(ks, clientKeyStorePassword.toCharArray());
-        }
-        return kmf.getKeyManagers();
     }
 }
