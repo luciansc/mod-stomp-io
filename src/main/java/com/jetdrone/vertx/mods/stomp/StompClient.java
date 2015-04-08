@@ -279,7 +279,6 @@ public class StompClient implements FrameHandler {
     }
 
     private void setupHeartbeat(Map<String, String> headers) {
-        // Avoid NPE
         if (Protocol.V1_0.version.equals(headers.get("version"))) {
             return;
         }
